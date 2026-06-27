@@ -1,0 +1,343 @@
+From 859e1178aaae88f028c8545223c10e7a0fe44140 Mon Sep 17 00:00:00 2001
+From: Brandon Thompson <brandon.joseph.thompson@gmail.com>
+Date: Sat, 27 Jun 2026 16:40:02 -0700
+Subject: [PATCH] Add compact mode, and combine pinned into main panel (with
+ separator).
+
+---
+ Makefile        |   1 +
+ compact.css     |  58 +++++++++++++++++++++++
+ main.go         | 123 ++++++++++++++++++++++++++++++++++++++++--------
+ uicomponents.go |   1 +
+ 4 files changed, 163 insertions(+), 20 deletions(-)
+ create mode 100644 compact.css
+
+diff --git a/Makefile b/Makefile
+index 24f6eff..a9815ca 100644
+--- a/Makefile
++++ b/Makefile
+@@ -18,6 +18,7 @@ install:
+ 	cp -r desktop-directories /usr/share/nwg-drawer
+ 	cp -r img /usr/share/nwg-drawer
+ 	cp drawer.css /usr/share/nwg-drawer
++	cp compact.css /usr/share/nwg-drawer
+ 	cp bin/nwg-drawer /usr/bin
+ 
+ 	install -Dm 644 -t "/usr/share/licenses/nwg-drawer" LICENSE
+diff --git a/compact.css b/compact.css
+new file mode 100644
+index 0000000..fb1bca8
+--- /dev/null
++++ b/compact.css
+@@ -0,0 +1,58 @@
++/* Compact Spotlight-style mode */
++
++window {
++    background: none;
++}
++
++#compact {
++    border-radius: 14px;
++    background-color: rgba(22, 22, 24, 0.94);
++    border: 1px solid rgba(255, 255, 255, 0.10);
++}
++
++entry {
++    background-color: rgba(255, 255, 255, 0.10);
++    border-radius: 10px;
++    border: 1px solid rgba(255, 255, 255, 0.12);
++    color: #ffffff;
++    padding: 8px 14px;
++    font-size: 17px;
++    min-width: 500px;
++    box-shadow: none;
++}
++
++button, image {
++    background: none;
++    border: none;
++    box-shadow: none;
++    color: #ffffff;
++}
++
++button {
++    padding: 12px 8px 8px 8px;
++    margin: 4px;
++    border-radius: 12px;
++    min-width: 90px;
++}
++
++button:hover {
++    background-color: rgba(255, 255, 255, 0.14);
++}
++
++button:focus {
++    background-color: rgba(255, 255, 255, 0.22);
++}
++
++#pinned-box {
++    padding-bottom: 8px;
++    border-bottom: 1px solid rgba(255, 255, 255, 0.10);
++}
++
++#status-line-wrapper {
++    padding: 2px 0;
++}
++
++#status-label {
++    font-size: 11px;
++    color: rgba(255, 255, 255, 0.50);
++}
+diff --git a/main.go b/main.go
+index cfae982..2e51b50 100644
+--- a/main.go
++++ b/main.go
+@@ -120,6 +120,7 @@ var desktopEntries []desktopEntry
+ // UI elements
+ var (
+ 	win                     *gtk.Window
++	backdropWin             *gtk.Window
+ 	resultWindow            *gtk.ScrolledWindow
+ 	fileSearchResults       []string
+ 	mathResultWindow        *gtk.Window
+@@ -162,7 +163,7 @@ func validateWm() {
+ }
+ 
+ // Flags
+-var cssFileName = flag.String("s", "drawer.css", "Styling: css file name")
++var cssFileName = flag.String("s", "", "Styling: css file name (default: compact.css in -compact mode, drawer.css otherwise)")
+ var targetOutput = flag.String("o", "", "name of the Output to display the drawer on (sway & Hyprland only)")
+ var displayVersion = flag.Bool("v", false, "display Version information")
+ var keyboard = flag.Bool("k", false, "set GTK layer shell Keyboard interactivity to 'on-demand' mode")
+@@ -197,11 +198,25 @@ var pbSize = flag.Int("pbsize", 64, "power bar icon size (only works w/ built-in
+ var pbUseIconTheme = flag.Bool("pbuseicontheme", false, "use icon theme instead of built-in icons in power bar")
+ var closeBtn = flag.String("closebtn", "none", "close button position: 'left' or 'right', 'none' by default")
+ var debug = flag.Bool("d", false, "Turn on Debug messages")
++var compact = flag.Bool("compact", false, "compact Spotlight-style mode: floating centered window, no categories, no file search")
+ 
+ func main() {
+ 	timeStart := time.Now()
+ 	flag.Parse()
+ 
++	if *cssFileName == "" {
++		if *compact {
++			*cssFileName = "compact.css"
++		} else {
++			*cssFileName = "drawer.css"
++		}
++	}
++
++	if *compact {
++		*noCats = true
++		*noFS = true
++	}
++
+ 	if *debug {
+ 		log.SetLevel(log.DebugLevel)
+ 	}
+@@ -344,6 +359,13 @@ func main() {
+ 		}
+ 	}
+ 
++	if !pathExists(filepath.Join(configDirectory, "compact.css")) {
++		err := copyFile(filepath.Join(dataDirectory, "compact.css"), filepath.Join(configDirectory, "compact.css"))
++		if err != nil {
++			log.Errorf("Failed copying 'compact.css' file: %s", err)
++		}
++	}
++
+ 	cacheDirectory := cacheDir()
+ 	if cacheDirectory == "" {
+ 		log.Panic("Couldn't determine cache directory location")
+@@ -451,24 +473,32 @@ func main() {
+ 			}
+ 		}
+ 
+-		gtklayershell.SetAnchor(win, gtklayershell.LayerShellEdgeBottom, true)
+-		gtklayershell.SetAnchor(win, gtklayershell.LayerShellEdgeTop, true)
+-		gtklayershell.SetAnchor(win, gtklayershell.LayerShellEdgeLeft, true)
+-		gtklayershell.SetAnchor(win, gtklayershell.LayerShellEdgeRight, true)
++		if !*compact {
++			gtklayershell.SetAnchor(win, gtklayershell.LayerShellEdgeBottom, true)
++			gtklayershell.SetAnchor(win, gtklayershell.LayerShellEdgeTop, true)
++			gtklayershell.SetAnchor(win, gtklayershell.LayerShellEdgeLeft, true)
++			gtklayershell.SetAnchor(win, gtklayershell.LayerShellEdgeRight, true)
++		}
+ 
+-		if *overlay {
++		if *compact {
++			// Compact mode floats centered over everything; no exclusive zone so the
++			// compositor keeps rendering the desktop behind the window.
++			gtklayershell.SetLayer(win, gtklayershell.LayerShellLayerOverlay)
++		} else if *overlay {
+ 			gtklayershell.SetLayer(win, gtklayershell.LayerShellLayerOverlay)
+ 			gtklayershell.SetExclusiveZone(win, -1)
+ 		} else {
+ 			gtklayershell.SetLayer(win, gtklayershell.LayerShellLayerTop)
+ 		}
+ 
+-		gtklayershell.SetMargin(win, gtklayershell.LayerShellEdgeTop, *marginTop)
+-		gtklayershell.SetMargin(win, gtklayershell.LayerShellEdgeLeft, *marginLeft)
+-		gtklayershell.SetMargin(win, gtklayershell.LayerShellEdgeRight, *marginRight)
+-		gtklayershell.SetMargin(win, gtklayershell.LayerShellEdgeBottom, *marginBottom)
++		if !*compact {
++			gtklayershell.SetMargin(win, gtklayershell.LayerShellEdgeTop, *marginTop)
++			gtklayershell.SetMargin(win, gtklayershell.LayerShellEdgeLeft, *marginLeft)
++			gtklayershell.SetMargin(win, gtklayershell.LayerShellEdgeRight, *marginRight)
++			gtklayershell.SetMargin(win, gtklayershell.LayerShellEdgeBottom, *marginBottom)
++		}
+ 
+-		if *keyboard {
++		if *keyboard || *compact {
+ 			log.Info("Setting GTK layer shell keyboard mode to: on-demand")
+ 			gtklayershell.SetKeyboardMode(win, gtklayershell.LayerShellKeyboardModeOnDemand)
+ 		} else {
+@@ -548,6 +578,7 @@ func main() {
+ 		return false
+ 	})
+ 
++
+ 	/*
+ 		In case someone REALLY needed to use X11 - for some stupid Zoom meeting or something, this allows
+ 		the drawer to behave properly on Openbox, and possibly somewhere else. For sure not on i3.
+@@ -556,13 +587,23 @@ func main() {
+ 	if !wayland() {
+ 		log.Info("Not Wayland, oh really?")
+ 		win.SetDecorated(false)
+-		win.Maximize()
++		if !*compact {
++			win.Maximize()
++		}
++	}
++
++	if *compact {
++		win.SetObjectProperty("name", "compact")
+ 	}
+ 
+ 	// Set up UI
+ 	outerVBox := gtk.NewBox(gtk.OrientationVertical, 0)
+ 	win.Add(outerVBox)
+ 
++	if *compact {
++		outerVBox.SetSizeRequest(760, -1)
++	}
++
+ 	closeButtonBox := createCloseButtonBox((*closeBtn != "none"), (*closeBtn != "right"))
+ 	if closeButtonBox != nil {
+ 		outerVBox.PackStart(closeButtonBox, false, false, 10)
+@@ -582,17 +623,15 @@ func main() {
+ 		outerVBox.PackStart(categoriesWrapper, false, false, 0)
+ 	}
+ 
+-	pinnedWrapper := gtk.NewBox(gtk.OrientationHorizontal, 0)
+-	outerVBox.PackStart(pinnedWrapper, false, false, 0)
+-
+-	pinnedFlowBoxWrapper = gtk.NewBox(gtk.OrientationHorizontal, 0)
+-	outerVBox.PackStart(pinnedFlowBoxWrapper, false, false, 0)
+-	pinnedFlowBox = setUpPinnedFlowBox()
+-
+ 	resultWindow = gtk.NewScrolledWindow(nil, nil)
+ 	resultWindow.SetEvents(int(gdk.AllEventsMask))
+ 	resultWindow.SetPolicy(gtk.PolicyAutomatic, gtk.PolicyAutomatic)
+ 
++	if *compact {
++		resultWindow.SetPropagateNaturalHeight(true)
++		resultWindow.SetMinContentHeight(600)
++	}
++
+ 	// On touch screen we don't want the button-release-event to launch the app if the user just wanted to scroll the
+ 	// window. Let's forbid doing so if the content has been scrolled. We will reset the value on button-press-event.
+ 	// Resolves https://github.com/nwg-piotr/nwg-drawer/issues/110
+@@ -618,11 +657,22 @@ func main() {
+ 		}
+ 		return false
+ 	})
+-	outerVBox.PackStart(resultWindow, true, true, 10)
++	if *compact {
++		outerVBox.PackStart(resultWindow, false, false, 10)
++	} else {
++		outerVBox.PackStart(resultWindow, true, true, 10)
++	}
+ 
+ 	resultsWrapper := gtk.NewBox(gtk.OrientationVertical, 0)
+ 	resultWindow.Add(resultsWrapper)
+ 
++	pinnedFlowBoxWrapper = gtk.NewBox(gtk.OrientationHorizontal, 0)
++	resultsWrapper.PackStart(pinnedFlowBoxWrapper, false, false, 0)
++	pinnedFlowBox = setUpPinnedFlowBox()
++
++	separator := gtk.NewSeparator(gtk.OrientationHorizontal)
++	resultsWrapper.PackStart(separator, false, false, 4)
++
+ 	appSearchResultWrapper = gtk.NewBox(gtk.OrientationVertical, 0)
+ 	resultsWrapper.PackStart(appSearchResultWrapper, false, false, 0)
+ 	appFlowBox = setUpAppsFlowBox(nil, "")
+@@ -726,6 +776,33 @@ func main() {
+ 	statusLabel.SetObjectProperty("name", "status-label")
+ 	statusLineWrapper.PackStart(statusLabel, true, false, 0)
+ 
++	if *compact && wayland() {
++		backdropWin = gtk.NewWindow(gtk.WindowToplevel)
++		gtklayershell.InitForWindow(backdropWin)
++		gtklayershell.SetNamespace(backdropWin, "nwg-drawer-backdrop")
++		gtklayershell.SetAnchor(backdropWin, gtklayershell.LayerShellEdgeTop, true)
++		gtklayershell.SetAnchor(backdropWin, gtklayershell.LayerShellEdgeBottom, true)
++		gtklayershell.SetAnchor(backdropWin, gtklayershell.LayerShellEdgeLeft, true)
++		gtklayershell.SetAnchor(backdropWin, gtklayershell.LayerShellEdgeRight, true)
++		gtklayershell.SetLayer(backdropWin, gtklayershell.LayerShellLayerTop)
++		gtklayershell.SetExclusiveZone(backdropWin, -1)
++		gtklayershell.SetKeyboardMode(backdropWin, gtklayershell.LayerShellKeyboardModeNone)
++		backdropWin.SetObjectProperty("name", "compact-backdrop")
++		backdropWin.Connect("button-release-event", func(_ *gtk.Window, event *gdk.Event) bool {
++			btnEvent := event.AsButton()
++			if btnEvent.Button() == 1 {
++				if *resident {
++					restoreStateAndHide()
++				} else {
++					gtk.MainQuit()
++				}
++				return true
++			}
++			return false
++		})
++		backdropWin.ShowAll()
++	}
++
+ 	win.ShowAll()
+ 
+ 	if !*noFS {
+@@ -765,6 +842,9 @@ func main() {
+ 						}
+ 
+ 						// Show window and focus the search box
++						if backdropWin != nil {
++							backdropWin.ShowAll()
++						}
+ 						win.ShowAll()
+ 						if fileSearchResultWrapper != nil {
+ 							fileSearchResultWrapper.Hide()
+@@ -839,6 +919,9 @@ func restoreStateAndHide() {
+ 			}
+ 			log.Debugf("IdleAdd: hiding win: native=%x", winPtr.Native())
+ 			winPtr.Hide()
++			if backdropWin != nil {
++				backdropWin.Hide()
++			}
+ 		})
+ 	}
+ 
+diff --git a/uicomponents.go b/uicomponents.go
+index e2b4a90..5244d74 100644
+--- a/uicomponents.go
++++ b/uicomponents.go
+@@ -90,6 +90,7 @@ func setUpPinnedFlowBox() *gtk.FlowBox {
+ 			flowBox.Add(btn)
+ 			btn.Parent().(*gtk.FlowBoxChild).SetCanFocus(false)
+ 		}
++
+ 		pinnedFlowBoxWrapper.PackStart(flowBox, true, false, 0)
+ 	}
+ 	flowBox.ShowAll()
+-- 
+2.54.0
+

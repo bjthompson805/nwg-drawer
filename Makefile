@@ -1,3 +1,22 @@
+UPSTREAM := https://github.com/nwg-piotr/nwg-drawer.git
+UPSTREAM_BRANCH := main
+
+.PHONY: setup update regen-patches get build install uninstall run
+
+setup:
+	git remote add upstream $(UPSTREAM) || true
+	git fetch upstream $(UPSTREAM_BRANCH)
+
+update:
+	git fetch upstream $(UPSTREAM_BRANCH)
+	git rebase upstream/$(UPSTREAM_BRANCH)
+	git am patches/*.patch
+	$(MAKE) build
+
+regen-patches:
+	mkdir -p patches
+	git format-patch upstream/$(UPSTREAM_BRANCH) -o patches/ --no-stat
+
 get:
 	go get github.com/diamondburned/gotk4/pkg/gdk/v3
 	go get github.com/diamondburned/gotk4/pkg/glib/v2
