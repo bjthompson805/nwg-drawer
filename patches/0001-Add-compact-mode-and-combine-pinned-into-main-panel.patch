@@ -1,4 +1,4 @@
-From 859e1178aaae88f028c8545223c10e7a0fe44140 Mon Sep 17 00:00:00 2001
+From fffe9577cb267fb252ab6845dcd056e96af43fc2 Mon Sep 17 00:00:00 2001
 From: Brandon Thompson <brandon.joseph.thompson@gmail.com>
 Date: Sat, 27 Jun 2026 16:40:02 -0700
 Subject: [PATCH] Add compact mode, and combine pinned into main panel (with
@@ -8,15 +8,15 @@ Subject: [PATCH] Add compact mode, and combine pinned into main panel (with
  Makefile        |   1 +
  compact.css     |  58 +++++++++++++++++++++++
  main.go         | 123 ++++++++++++++++++++++++++++++++++++++++--------
- uicomponents.go |   1 +
- 4 files changed, 163 insertions(+), 20 deletions(-)
+ uicomponents.go |   8 ++--
+ 4 files changed, 165 insertions(+), 25 deletions(-)
  create mode 100644 compact.css
 
 diff --git a/Makefile b/Makefile
-index 24f6eff..a9815ca 100644
+index eb1e899..d26eb4c 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -18,6 +18,7 @@ install:
+@@ -37,6 +37,7 @@ install:
  	cp -r desktop-directories /usr/share/nwg-drawer
  	cp -r img /usr/share/nwg-drawer
  	cp drawer.css /usr/share/nwg-drawer
@@ -327,10 +327,24 @@ index cfae982..2e51b50 100644
  	}
  
 diff --git a/uicomponents.go b/uicomponents.go
-index e2b4a90..5244d74 100644
+index e2b4a90..a2c2658 100644
 --- a/uicomponents.go
 +++ b/uicomponents.go
-@@ -90,6 +90,7 @@ func setUpPinnedFlowBox() *gtk.FlowBox {
+@@ -21,11 +21,8 @@ func setUpPinnedFlowBox() *gtk.FlowBox {
+ 		pinnedFlowBox = nil
+ 	}
+ 	flowBox := gtk.NewFlowBox()
+-	if uint(len(pinned)) >= *columnsNumber {
+-		flowBox.SetMaxChildrenPerLine(*columnsNumber)
+-	} else if len(pinned) > 0 {
+-		flowBox.SetMaxChildrenPerLine(uint(len(pinned)))
+-	}
++	flowBox.SetMinChildrenPerLine(*columnsNumber)
++	flowBox.SetMaxChildrenPerLine(*columnsNumber)
+ 
+ 	flowBox.SetColumnSpacing(*itemSpacing)
+ 	flowBox.SetRowSpacing(*itemSpacing)
+@@ -90,6 +87,7 @@ func setUpPinnedFlowBox() *gtk.FlowBox {
  			flowBox.Add(btn)
  			btn.Parent().(*gtk.FlowBoxChild).SetCanFocus(false)
  		}
