@@ -6,10 +6,10 @@ Subject: [PATCH] Add compact mode, and combine pinned into main panel (with
 
 ---
  Makefile        |   1 +
- compact.css     |  58 +++++++++++++++++++++++
- main.go         | 123 ++++++++++++++++++++++++++++++++++++++++--------
- uicomponents.go |   8 ++--
- 4 files changed, 165 insertions(+), 25 deletions(-)
+ compact.css     |  58 ++++++++++++++++++++++
+ main.go         | 126 ++++++++++++++++++++++++++++++++++++++++++--------
+ uicomponents.go |   8 ++-
+ 4 files changed, 168 insertions(+), 25 deletions(-)
  create mode 100644 compact.css
 
 diff --git a/Makefile b/Makefile
@@ -306,7 +306,17 @@ index cfae982..2e51b50 100644
  	win.ShowAll()
  
  	if !*noFS {
-@@ -765,6 +842,9 @@ func main() {
+@@ -740,6 +817,9 @@ func main() {
+ 	}
+ 	if *resident && win.IsVisible() {
+ 		win.Hide()
++		if backdropWin != nil {
++			backdropWin.Hide()
++		}
+ 	}
+ 
+ 	t := time.Now()
+@@ -765,6 +845,9 @@ func main() {
  						}
  
  						// Show window and focus the search box
@@ -316,7 +326,7 @@ index cfae982..2e51b50 100644
  						win.ShowAll()
  						if fileSearchResultWrapper != nil {
  							fileSearchResultWrapper.Hide()
-@@ -839,6 +919,9 @@ func restoreStateAndHide() {
+@@ -839,6 +922,9 @@ func restoreStateAndHide() {
  			}
  			log.Debugf("IdleAdd: hiding win: native=%x", winPtr.Native())
  			winPtr.Hide()
