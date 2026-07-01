@@ -1,0 +1,174 @@
+From 7961308589cdc009b78791f3d4bc4a579bb5474c Mon Sep 17 00:00:00 2001
+From: Brandon Thompson <brandon.joseph.thompson@gmail.com>
+Date: Tue, 30 Jun 2026 21:57:04 -0700
+Subject: [PATCH] Add left-mouse drag to reorder pinned apps
+
+Make each pinned button a GTK drag source and drop target (left button,
+same-application only). Dropping one pinned item onto another reorders the
+pinned slice (before/after decided by the drop x-position) and persists it
+via savePinned(); the existing file watcher then rebuilds the flow box.
+
+An insertion indicator makes the drop position clear: instead of the default
+whole-widget highlight, a blue bar is drawn (via an inset box-shadow, styled
+by a process-wide CSS provider at USER priority) on the left or right edge of
+the button under the cursor, matching where the item will land.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+diff --git a/tools.go b/tools.go
+index 1725779..b802238 100644
+--- a/tools.go
++++ b/tools.go
+@@ -537,6 +537,49 @@ func unpinItem(itemID string) {
+ 	}
+ }
+ 
++// movePinned re-orders the pinned slice by removing srcID and re-inserting it
++// relative to destID (after it when `after` is true, otherwise before it), then
++// persists the result. The file watcher rebuilds the flow box afterwards.
++func movePinned(srcID, destID string, after bool) {
++	if srcID == destID {
++		return
++	}
++
++	srcIdx := -1
++	for i, v := range pinned {
++		if v == srcID {
++			srcIdx = i
++			break
++		}
++	}
++	if srcIdx < 0 {
++		return
++	}
++	pinned = append(pinned[:srcIdx], pinned[srcIdx+1:]...)
++
++	destIdx := -1
++	for i, v := range pinned {
++		if v == destID {
++			destIdx = i
++			break
++		}
++	}
++	if destIdx < 0 {
++		pinned = append(pinned, srcID)
++	} else {
++		insertAt := destIdx
++		if after {
++			insertAt++
++		}
++		pinned = append(pinned, "")
++		copy(pinned[insertAt+1:], pinned[insertAt:])
++		pinned[insertAt] = srcID
++	}
++
++	savePinned()
++	log.Infof("Moved pinned item %s", srcID)
++}
++
+ func remove(s []string, r string) []string {
+ 	for i, v := range s {
+ 		if v == r {
+diff --git a/uicomponents.go b/uicomponents.go
+index a2c2658..2eda3e1 100644
+--- a/uicomponents.go
++++ b/uicomponents.go
+@@ -15,7 +15,29 @@ import (
+ 	"github.com/diamondburned/gotk4/pkg/gtk/v3"
+ )
+ 
++var dropIndicatorCSSInstalled bool
++
++// installDropIndicatorCSS registers, once per process, the styling for the
++// pinned-item drag insertion bar. It's added at USER priority so it overrides
++// any 'box-shadow' rule in the loaded theme (e.g. compact.css). The bar is an
++// inset box-shadow so it doesn't shift the button's contents.
++func installDropIndicatorCSS() {
++	if dropIndicatorCSSInstalled {
++		return
++	}
++	provider := gtk.NewCSSProvider()
++	css := ".drop-before { box-shadow: inset 4px 0 0 0 #5294e2; }\n" +
++		".drop-after { box-shadow: inset -4px 0 0 0 #5294e2; }"
++	if err := provider.LoadFromData(css); err != nil {
++		log.Errorf("Failed to load drop-indicator CSS: %s", err)
++		return
++	}
++	gtk.StyleContextAddProviderForScreen(gdk.ScreenGetDefault(), provider, gtk.STYLE_PROVIDER_PRIORITY_USER)
++	dropIndicatorCSSInstalled = true
++}
++
+ func setUpPinnedFlowBox() *gtk.FlowBox {
++	installDropIndicatorCSS()
+ 	if pinnedFlowBox != nil {
+ 		pinnedFlowBox.Destroy()
+ 		pinnedFlowBox = nil
+@@ -41,8 +63,9 @@ func setUpPinnedFlowBox() *gtk.FlowBox {
+ 			btn := gtk.NewButton()
+ 
+ 			var img *gtk.Image
++			var pixbuf *gdkpixbuf.Pixbuf
+ 			if entry.Icon != "" {
+-				pixbuf, _ := createPixbuf(entry.Icon, *iconSize)
++				pixbuf, _ = createPixbuf(entry.Icon, *iconSize)
+ 				img = gtk.NewImageFromPixbuf(pixbuf)
+ 			} else {
+ 				img = gtk.NewImageFromIconName("image-missing", int(gtk.IconSizeInvalid))
+@@ -84,6 +107,54 @@ func setUpPinnedFlowBox() *gtk.FlowBox {
+ 			btn.Connect("focus-in-event", func() {
+ 				statusLabel.SetText(entry.CommentLoc)
+ 			})
++
++			// Left-mouse drag to re-arrange pinned items. We ship the dragged
++			// item's DesktopID as UTF8 text, restricted to this application so
++			// external drops are ignored. The drop target reorders the pinned
++			// slice and persists it; the file watcher then rebuilds the box.
++			// We handle motion/highlight ourselves (no DestDefaultHighlight) to
++			// draw an insertion bar on the edge where the item will land.
++			desktopID := desktopID
++			dragTargets := []gtk.TargetEntry{
++				*gtk.NewTargetEntry("UTF8_STRING", uint(gtk.TargetSameApp), 0),
++			}
++			btn.DragSourceSet(gdk.Button1Mask, dragTargets, gdk.ActionMove)
++			btn.DragDestSet(gtk.DestDefaultMotion|gtk.DestDefaultDrop, dragTargets, gdk.ActionMove)
++			if pixbuf != nil {
++				btn.DragSourceSetIconPixbuf(pixbuf)
++			}
++			btn.Connect("drag-data-get", func(_ *gtk.Button, _ *gdk.DragContext, data *gtk.SelectionData, _ uint, _ uint) {
++				data.SetText(desktopID)
++			})
++			// Show where the item will land: a bar on the left ("drop-before")
++			// or right ("drop-after") edge, following the drop x-position.
++			btn.Connect("drag-motion", func(_ *gtk.Button, ctx *gdk.DragContext, x, _ int, time uint) bool {
++				sc := btn.StyleContext()
++				if x > btn.AllocatedWidth()/2 {
++					sc.RemoveClass("drop-before")
++					sc.AddClass("drop-after")
++				} else {
++					sc.RemoveClass("drop-after")
++					sc.AddClass("drop-before")
++				}
++				gdk.DragStatus(ctx, gdk.ActionMove, uint32(time))
++				return true
++			})
++			btn.Connect("drag-leave", func(_ *gtk.Button, _ *gdk.DragContext, _ uint) {
++				sc := btn.StyleContext()
++				sc.RemoveClass("drop-before")
++				sc.RemoveClass("drop-after")
++			})
++			btn.Connect("drag-data-received", func(_ *gtk.Button, _ *gdk.DragContext, x, _ int, data *gtk.SelectionData, _ uint, _ uint) {
++				sc := btn.StyleContext()
++				sc.RemoveClass("drop-before")
++				sc.RemoveClass("drop-after")
++				srcID := data.Text()
++				if srcID != "" && srcID != desktopID {
++					movePinned(srcID, desktopID, x > btn.AllocatedWidth()/2)
++				}
++			})
++
+ 			flowBox.Add(btn)
+ 			btn.Parent().(*gtk.FlowBoxChild).SetCanFocus(false)
+ 		}
+-- 
+2.54.0
+
