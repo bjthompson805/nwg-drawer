@@ -1,0 +1,104 @@
+From 16f1d302d27f2d7ec5084f4ddfe92cc73dd57c48 Mon Sep 17 00:00:00 2001
+From: Brandon Thompson <brandon.joseph.thompson@gmail.com>
+Date: Wed, 1 Jul 2026 08:24:55 -0700
+Subject: [PATCH] Hide pinned apps area while searching
+
+During a normal text search the pinned apps grid stayed at full height,
+which could push the app search results off-screen when many apps were
+pinned. Collapse the pinned grid and its separator while a search is
+active (matching the existing ':' command-mode behavior) and restore
+them when the search is cleared.
+
+diff --git a/main.go b/main.go
+index cf421ac..c6bb579 100644
+--- a/main.go
++++ b/main.go
+@@ -135,6 +135,7 @@ var (
+ 	powerButtonsWrapper     *gtk.Box
+ 	pinnedFlowBox           *gtk.FlowBox
+ 	pinnedFlowBoxWrapper    *gtk.Box
++	pinnedSeparator         *gtk.Separator
+ 	categoriesWrapper       *gtk.Box
+ 	catButtons              []*gtk.Button
+ 	statusLabel             *gtk.Label
+@@ -670,8 +671,8 @@ func main() {
+ 	resultsWrapper.PackStart(pinnedFlowBoxWrapper, false, false, 0)
+ 	pinnedFlowBox = setUpPinnedFlowBox()
+ 
+-	separator := gtk.NewSeparator(gtk.OrientationHorizontal)
+-	resultsWrapper.PackStart(separator, false, false, 4)
++	pinnedSeparator = gtk.NewSeparator(gtk.OrientationHorizontal)
++	resultsWrapper.PackStart(pinnedSeparator, false, false, 4)
+ 
+ 	appSearchResultWrapper = gtk.NewBox(gtk.OrientationVertical, 0)
+ 	resultsWrapper.PackStart(appSearchResultWrapper, false, false, 0)
+diff --git a/uicomponents.go b/uicomponents.go
+index 2eda3e1..a9c8665 100644
+--- a/uicomponents.go
++++ b/uicomponents.go
+@@ -511,6 +511,27 @@ func walk(path string, d fs.DirEntry, e error) error {
+ 	return nil
+ }
+ 
++// hidePinned collapses the pinned apps area (grid + separator) so it stops
++// taking up vertical space, e.g. while a search is active.
++func hidePinned() {
++	if pinnedFlowBox != nil && pinnedFlowBox.Visible() {
++		pinnedFlowBox.Hide()
++	}
++	if pinnedSeparator != nil && pinnedSeparator.Visible() {
++		pinnedSeparator.Hide()
++	}
++}
++
++// showPinned restores the pinned apps area hidden by hidePinned.
++func showPinned() {
++	if pinnedFlowBox != nil && !pinnedFlowBox.Visible() && len(pinned) > 0 {
++		pinnedFlowBox.ShowAll()
++	}
++	if pinnedSeparator != nil && !pinnedSeparator.Visible() && len(pinned) > 0 {
++		pinnedSeparator.ShowAll()
++	}
++}
++
+ func setUpSearchEntry() *gtk.SearchEntry {
+ 	sEntry := gtk.NewSearchEntry()
+ 	sEntry.SetPlaceholderText("Type to search")
+@@ -534,9 +555,7 @@ func setUpSearchEntry() *gtk.SearchEntry {
+ 					log.Debugf("Skipping appFlowBox.Destroy(); already invalid or nil")
+ 					appFlowBox = nil
+ 				}
+-				if pinnedFlowBox != nil && pinnedFlowBox.Visible() {
+-					pinnedFlowBox.Hide()
+-				}
++				hidePinned()
+ 				if categoriesWrapper != nil && categoriesWrapper.Visible() {
+ 					categoriesWrapper.Hide()
+ 				}
+@@ -553,6 +572,12 @@ func setUpSearchEntry() *gtk.SearchEntry {
+ 			// search apps
+ 			appFlowBox = setUpAppsFlowBox(nil, phrase)
+ 
++			// Collapse the pinned apps area while searching so results stay
++			// visible even when many apps are pinned. This must run AFTER
++			// setUpAppsFlowBox, which calls resultWindow.ShowAll() and would
++			// otherwise immediately un-hide the pinned grid.
++			hidePinned()
++
+ 			// search files
+ 			if !*noFS && len(phrase) > 2 {
+ 				if fileSearchResultFlowBox != nil {
+@@ -614,9 +639,7 @@ func setUpSearchEntry() *gtk.SearchEntry {
+ 				fileSearchResultWrapper.Hide()
+ 			}
+ 
+-			if !pinnedFlowBox.Visible() {
+-				pinnedFlowBox.ShowAll()
+-			}
++			showPinned()
+ 
+ 			if categoriesWrapper != nil && !categoriesWrapper.Visible() {
+ 				categoriesWrapper.ShowAll()
+-- 
+2.54.0
+
